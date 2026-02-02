@@ -1,0 +1,152 @@
+#!/bin/bash
+#
+# postman-report - Fetch Postman team reports via CLI
+#
+
+set -euo pipefail
+
+POSTMANRC="$HOME/.postman/postmanrc"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log_info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
+log_success() { echo -e "${GREEN}[OK]${NC} $*" >&2; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+check_postman_cli() {
+  if ! command -v postman &> /dev/null; then
+    log_error "Postman CLI not found. Install via: npm install -g postman-cli"
+    exit 1
+  fi
+}
+
+check_logged_in() {
+  [[ -f "$POSTMANRC" ]] && [[ -n "$(jq -r '.login._profiles[0].accessToken // empty' "$POSTMANRC" 2>/dev/null)" ]]
+}
+
+get_access_token() {
+  jq -r '.login._profiles[0].accessToken // empty' "$POSTMANRC" 2>/dev/null
+}
+
+do_login() {
+  log_info "Starting Postman login..."
+  postman login
+  check_logged_in || { log_error "Login failed."; exit 1; }
+  log_success "Logged in as: $(jq -r '.login._profiles[0].username' "$POSTMANRC")"
+}
+
+get_report_config() {
+  case "$1" in
+    users)    echo '{"dimensions":["userName","email","userAddedInTeam","lastActiveDate","userRole","invitedBy","inviteType","publicProfileEnabled"],"measures":[],"filters":[]}' ;;
+    activity) echo '{"dimensions":["userName","email","lastActiveDate"],"measures":["totalApiRequests","totalCollectionRuns"],"filters":[]}' ;;
+    roles)    echo '{"dimensions":["userName","email","userRole"],"measures":[],"filters":[]}' ;;
+    *)        echo "" ;;
+  esac
+}
+
+format_table() {
+  local json="$1" type="$2"
+  case "$type" in
+    users)
+      echo "$json" | jq -r '["NAME","EMAIL","JOINED","LAST_ACTIVE","ROLES"],(.data[]|[.dimensions.userName,.dimensions.email,.dimensions.userAddedInTeam,.dimensions.lastActiveDate,.dimensions.userRole])|@tsv' | column -t -s $'\t' ;;
+    activity)
+      echo "$json" | jq -r '["NAME","EMAIL","LAST_ACTIVE","API_REQUESTS","RUNS"],(.data[]|[.dimensions.userName,.dimensions.email,.dimensions.lastActiveDate,(.measures.totalApiRequests//"N/A"),(.measures.totalCollectionRuns//"N/A")])|@tsv' | column -t -s $'\t' ;;
+    roles)
+      echo "$json" | jq -r '["NAME","EMAIL","ROLES"],(.data[]|[.dimensions.userName,.dimensions.email,.dimensions.userRole])|@tsv' | column -t -s $'\t' ;;
+  esac
+}
+
+format_csv() {
+  local json="$1" type="$2"
+  case "$type" in
+    users)
+      echo "$json" | jq -r '["userName","email","userAddedInTeam","lastActiveDate","userRole","invitedBy","inviteType","publicProfileEnabled"],(.data[]|[.dimensions.userName,.dimensions.email,.dimensions.userAddedInTeam,.dimensions.lastActiveDate,.dimensions.userRole,.dimensions.invitedBy,.dimensions.inviteType,.dimensions.publicProfileEnabled])|@csv' ;;
+    activity)
+      echo "$json" | jq -r '["userName","email","lastActiveDate","totalApiRequests","totalCollectionRuns"],(.data[]|[.dimensions.userName,.dimensions.email,.dimensions.lastActiveDate,(.measures.totalApiRequests//""),(.measures.totalCollectionRuns//"")])|@csv' ;;
+    roles)
+      echo "$json" | jq -r '["userName","email","userRole"],(.data[]|[.dimensions.userName,.dimensions.email,.dimensions.userRole])|@csv' ;;
+  esac
+}
+
+fetch_report() {
+  local report_type="$1" format="$2"
+  local body=$(get_report_config "$report_type")
+
+  [[ -z "$body" ]] && { log_error "Unknown report: $report_type"; exit 1; }
+
+  local payload=$(jq -nc --arg p "/v3/views/BillingUsersDimension" --argjson b "$body" '{service:"report",method:"post",path:$p,body:$b}')
+
+  log_info "Fetching '$report_type' report..."
+
+  local response=$(curl -s -w "\n%{http_code}" "https://go.postman.co/_api/ws/proxy" \
+    -H 'content-type: application/json' \
+    -H "x-access-token: $(get_access_token)" \
+    -d "$payload")
+
+  local http_code=$(echo "$response" | tail -n1)
+  local body=$(echo "$response" | sed '$d')
+
+  if [[ "$http_code" -eq 200 ]]; then
+    log_success "Done."
+    case "$format" in
+      table) format_table "$body" "$report_type" ;;
+      csv)   format_csv "$body" "$report_type" ;;
+      json)  echo "$body" ;;
+    esac
+  elif [[ "$http_code" -eq 403 ]]; then
+    log_error "Auth failed. Run: postman-report --login"
+    exit 1
+  else
+    log_error "Request failed (HTTP $http_code)"
+    echo "$body" >&2
+    exit 1
+  fi
+}
+
+usage() {
+  cat << 'EOF'
+postman-report - Fetch Postman team reports
+
+USAGE:
+    postman-report [report_type] [--format json|table|csv]
+    postman-report --login
+
+REPORT TYPES:
+    users     User details (default)
+    activity  API requests, collection runs
+    roles     User roles
+
+EXAMPLES:
+    postman-report                    # JSON output
+    postman-report --format table     # Table output
+    postman-report --format csv       # CSV output
+    postman-report activity           # Activity report
+    postman-report --login            # Re-authenticate
+EOF
+}
+
+main() {
+  local report_type="users" format="json"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) usage; exit 0 ;;
+      --login) check_postman_cli; do_login; exit 0 ;;
+      --format) format="$2"; shift 2 ;;
+      users|activity|roles) report_type="$1"; shift ;;
+      *) log_error "Unknown: $1"; usage; exit 1 ;;
+    esac
+  done
+
+  check_postman_cli
+  check_logged_in || { log_warn "Not logged in."; do_login; }
+  fetch_report "$report_type" "$format"
+}
+
+main "$@"
