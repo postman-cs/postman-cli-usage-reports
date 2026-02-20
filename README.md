@@ -1,6 +1,6 @@
 # Usage Reports via Postman CLI
 
-A command-line tool for extracting Postman team analytics and usage data. Generate reports on users, API inventory, workspace activity, test coverage, collaboration trends, and Private API Network metrics.
+A reference for accessing Postman team analytics and usage data. Generate reports on users, API inventory, workspace activity, test coverage, collaboration trends, and Private API Network metrics.
 
 **Features:**
 - 28 report commands covering users, content, coverage, trends, and team metadata
