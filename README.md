@@ -235,6 +235,35 @@ postman-report freshness --format table
 postman-report filters --format table
 ```
 
+### JSON Output (Default)
+
+JSON is the default output format. Omit `--format` or pass `--format json` explicitly.
+
+```bash
+# User details (default format is JSON)
+postman-report users
+
+# Team info as JSON
+postman-report team --format json
+
+# Summary dashboard as JSON
+postman-report summary
+
+# Coverage as JSON (aggregated across all types)
+postman-report coverage
+
+# Single coverage type as JSON (raw API response)
+postman-report coverage tests
+
+# Trends as JSON (multiple series in one object)
+postman-report trends
+
+# List reports as JSON
+postman-report collections
+```
+
+Some reports compose JSON from multiple API calls. For example, `summary` merges four endpoints into one object, while `collections` passes the raw API response through.
+
 ### Data Processing with jq
 
 ```bash
@@ -249,6 +278,15 @@ postman-report coverage tests | jq '.data.dataset[0].values[0].x'
 
 # Export all API IDs from filters
 postman-report filters | jq -r '.apis.allApis[].id'
+
+# Extract entity counts as key:value pairs
+postman-report summary | jq '{totalAPIs, teamAPIs, totalWorkspaces}'
+
+# List all collection names
+postman-report collections | jq -r '.data.dataset[].value.collectionName'
+
+# Get workspace types and counts
+postman-report workspaces | jq '[.data.dataset[].values[] | {type: .x, count: .y}]'
 ```
 
 ## Authentication
@@ -263,6 +301,87 @@ postman-report --login
 ```
 
 ## Sample Output
+
+### Team (JSON)
+```json
+{
+  "teamName": "Postman Customer Org",
+  "teamCreated": "2017-11-05T17:11:09.000Z",
+  "currentPlan": "Enterprise",
+  "billingFrequency": "annual",
+  "nextRenewal": "0000-00-00 00:00:00",
+  "memberCount": 123,
+  "ssoProvider": "saml"
+}
+```
+
+### Summary (JSON)
+```json
+{
+  "totalAPIs": 2193,
+  "teamAPIs": 411,
+  "totalWorkspaces": 1027,
+  "entities": {
+    "labels": null,
+    "dataset": [
+      { "type": "bar", "legend": "Environments", "values": [{ "x": 0, "y": 657 }] },
+      { "type": "bar", "legend": "Monitors", "values": [{ "x": 0, "y": 87 }] },
+      { "type": "bar", "legend": "Mocks", "values": [{ "x": 0, "y": 214 }] },
+      { "type": "bar", "legend": "Collections", "values": [{ "x": 0, "y": 2010 }] },
+      { "type": "bar", "legend": "APIs", "values": [{ "x": 0, "y": 411 }] }
+    ]
+  }
+}
+```
+
+### Users (JSON)
+```json
+{
+  "data": [
+    {
+      "measures": {},
+      "dimensions": {
+        "userName": "Jane Smith",
+        "email": "jane.smith@example.com",
+        "userAddedInTeam": "2024-03-15",
+        "lastActiveDate": "2026-02-19",
+        "userRole": "Admin, Developer",
+        "invitedBy": "admin@example.com",
+        "inviteType": "Invite Link",
+        "publicProfileEnabled": "Yes"
+      }
+    }
+  ],
+  "meta": { ... },
+  "numRows": 123
+}
+```
+
+### Coverage (JSON)
+```json
+{
+  "mocks": {
+    "id": "APIsWithMocks",
+    "label": "API mock coverage",
+    "data": {
+      "dataset": [
+        { "legend": "With mocks", "values": [{ "x": 43 }] },
+        { "legend": "Without mocks", "values": [{ "x": 368 }] }
+      ]
+    }
+  },
+  "monitors": { ... },
+  "tests": { ... },
+  "documentation": { ... }
+}
+```
+
+### Freshness (JSON)
+```json
+{
+  "lastRefreshedAt": "2026-02-20T02:47:33.000Z"
+}
+```
 
 ### Summary (Table)
 ```
